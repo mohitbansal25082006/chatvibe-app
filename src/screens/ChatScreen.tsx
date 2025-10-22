@@ -27,9 +27,7 @@ import { RootStackParamList, Message as DBMessage, MessageReaction } from '../ty
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
-// Removed Location import
+// Removed DocumentPicker and ImagePicker imports
 import { Audio } from 'expo-av';
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
@@ -154,7 +152,6 @@ const MessageBubble: React.FC<{
   const [showReactions, setShowReactions] = useState(false);
   const [showActions, setShowActions] = useState(false);
 
-  // Find the parent message if this is a reply
   const parentMessage = message.parent_message_id
     ? messages.find(m => m.id === message.parent_message_id)
     : null;
@@ -203,7 +200,6 @@ const MessageBubble: React.FC<{
       styles.messageContainer,
       isUser ? styles.userMessageContainer : styles.botMessageContainer
     ]}>
-      {/* Show parent message if this is a reply */}
       {parentMessage && (
         <View style={styles.parentMessageContainer}>
           <View style={styles.parentMessageBar} />
@@ -364,7 +360,7 @@ export const ChatScreen: React.FC = () => {
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Message[]>([]);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  // Removed unused 'recording' state that caused the type error
   const [isRecording, setIsRecording] = useState(false);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const scrollViewRef = useRef<KeyboardAwareScrollView>(null);
@@ -541,7 +537,6 @@ export const ChatScreen: React.FC = () => {
     try {
       await submitFeedback(messageId, score);
       await loadMessages();
-      // Show feedback to user
       Alert.alert(
         'Feedback Submitted',
         score > 0
@@ -587,36 +582,7 @@ export const ChatScreen: React.FC = () => {
     }
   };
 
-  const handlePickImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 1,
-      });
-      if (!result.canceled) {
-        console.log('Selected image:', result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
-    }
-  };
-
-  const handlePickDocument = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({});
-      if (result.assets && result.assets.length > 0) {
-        console.log('Selected document:', result.assets[0]);
-      }
-    } catch (error) {
-      console.error('Error picking document:', error);
-      Alert.alert('Error', 'Failed to pick document');
-    }
-  };
-
-  // Removed handleShareLocation
+  // Removed handlePickImage and handlePickDocument
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -783,19 +749,7 @@ export const ChatScreen: React.FC = () => {
         )}
         <View style={[styles.inputContainer, { paddingBottom: isIOS ? insets.bottom : 16 }]}>
           <View style={styles.inputActions}>
-            <TouchableOpacity
-              style={styles.inputActionButton}
-              onPress={handlePickImage}
-            >
-              <Ionicons name="image-outline" size={20} color="#6366f1" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.inputActionButton}
-              onPress={handlePickDocument}
-            >
-              <Ionicons name="document-outline" size={20} color="#6366f1" />
-            </TouchableOpacity>
-            {/* Location button removed */}
+            {/* Image and document upload buttons REMOVED */}
             {isRecording ? (
               <TouchableOpacity
                 style={[styles.inputActionButton, styles.recordingButton]}
@@ -919,6 +873,7 @@ export const ChatScreen: React.FC = () => {
   );
 };
 
+// Styles remain unchanged
 const styles = StyleSheet.create({
   container: {
     flex: 1,
