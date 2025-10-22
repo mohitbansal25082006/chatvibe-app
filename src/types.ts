@@ -180,6 +180,11 @@ export interface ChatContextType {
   isRecording: boolean;
   isSpeaking: boolean;
   suggestions: ChatSuggestion[];
+  loadingSuggestions: boolean;
+  loadingSummary: boolean;
+  summary: string | null;
+  showSummary: boolean;
+  setShowSummary: (show: boolean) => void;
   fetchBots: () => Promise<void>;
   fetchConversations: () => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<Message[]>;

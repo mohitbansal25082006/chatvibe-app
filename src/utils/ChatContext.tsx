@@ -50,6 +50,12 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [pendingMessages, setPendingMessages] = useState<{[key: string]: Message[]}>({});
   const [retryCount, setRetryCount] = useState<{[key: string]: number}>({});
   const [botMemories, setBotMemories] = useState<{[key: string]: BotMemory}>({});
+  
+  // New loading states for suggestions and summary
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [showSummary, setShowSummary] = useState(false);
 
   // ========================================
   // FETCH BOTS
@@ -234,6 +240,120 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       return null;
     }
   }, [botMemories]);
+
+  // ========================================
+  // UPDATE BOT MEMORY WITH ADVANCED EXTRACTION
+  // ========================================
+  
+  const updateBotMemory = async (botId: string, userId: string, messages: any[]): Promise<void> => {
+    try {
+      // Use advanced memory extraction
+      const memoryData = await extractMemoryFromConversation(messages);
+      
+      // Check if memory already exists
+      const { data: existingMemory } = await supabase
+        .from('bot_memories')
+        .select('*')
+        .eq('bot_id', botId)
+        .eq('user_id', userId)
+        .maybeSingle();
+      
+      if (existingMemory) {
+        // Update existing memory
+        const { error } = await supabase
+          .from('bot_memories')
+          .update({
+            conversation_summary: memoryData.summary,
+            user_preferences: memoryData.userPreferences,
+            important_dates: memoryData.importantDates,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('bot_id', botId)
+          .eq('user_id', userId);
+        
+        if (error) throw error;
+        
+        // Update state
+        setBotMemories(prev => ({
+          ...prev,
+          [`${botId}_${userId}`]: {
+            ...prev[`${botId}_${userId}`],
+            conversation_summary: memoryData.summary,
+            user_preferences: memoryData.userPreferences,
+            important_dates: memoryData.importantDates,
+            updated_at: new Date().toISOString()
+          }
+        }));
+      } else {
+        // Create new memory
+        const { data, error } = await supabase
+          .from('bot_memories')
+          .insert({
+            bot_id: botId,
+            user_id: userId,
+            conversation_summary: memoryData.summary,
+            user_preferences: memoryData.userPreferences,
+            important_dates: memoryData.importantDates,
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        
+        // Update state
+        setBotMemories(prev => ({
+          ...prev,
+          [`${botId}_${userId}`]: data
+        }));
+      }
+      
+      // Update cache
+      await AsyncStorage.setItem(
+        `cached_memory_${botId}_${userId}`, 
+        JSON.stringify({
+          ...existingMemory,
+          conversation_summary: memoryData.summary,
+          user_preferences: memoryData.userPreferences,
+          important_dates: memoryData.importantDates,
+          updated_at: new Date().toISOString()
+        })
+      );
+    } catch (error: any) {
+      console.error('Error updating bot memory:', error);
+      // Don't show alert for memory errors as they're not critical
+    }
+  };
+
+  // ========================================
+  // ADVANCED MOOD DETECTION
+  // ========================================
+  
+  const detectMood = async (text: string): Promise<any> => {
+    try {
+      // Import the detectMood function from openai.ts
+      const { detectMood: detectMoodFromAI } = await import('../services/openai');
+      return await detectMoodFromAI(text);
+    } catch (error) {
+      console.error('Error detecting mood:', error);
+      
+      // Fallback to simple mood detection
+      const lowerText = text.toLowerCase();
+      
+      if (lowerText.includes('happy') || lowerText.includes('excited') || lowerText.includes('great')) {
+        return { mood: 'happy', confidence: 0.7 };
+      } else if (lowerText.includes('sad') || lowerText.includes('down') || lowerText.includes('unhappy')) {
+        return { mood: 'sad', confidence: 0.7 };
+      } else if (lowerText.includes('angry') || lowerText.includes('mad') || lowerText.includes('frustrated')) {
+        return { mood: 'angry', confidence: 0.7 };
+      } else if (lowerText.includes('anxious') || lowerText.includes('worried') || lowerText.includes('nervous')) {
+        return { mood: 'anxious', confidence: 0.7 };
+      } else if (lowerText.includes('tired') || lowerText.includes('exhausted') || lowerText.includes('sleepy')) {
+        return { mood: 'tired', confidence: 0.7 };
+      } else {
+        return { mood: 'neutral', confidence: 0.5 };
+      }
+    }
+  };
 
   // ========================================
   // CREATE BOT
@@ -584,120 +704,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     } catch (error: any) {
       console.error('Error sending message:', error);
       Alert.alert('Error', error.message || 'Failed to send message');
-    }
-  };
-
-  // ========================================
-  // UPDATE BOT MEMORY WITH ADVANCED EXTRACTION
-  // ========================================
-  
-  const updateBotMemory = async (botId: string, userId: string, messages: any[]): Promise<void> => {
-    try {
-      // Use advanced memory extraction
-      const memoryData = await extractMemoryFromConversation(messages);
-      
-      // Check if memory already exists
-      const { data: existingMemory } = await supabase
-        .from('bot_memories')
-        .select('*')
-        .eq('bot_id', botId)
-        .eq('user_id', userId)
-        .maybeSingle();
-      
-      if (existingMemory) {
-        // Update existing memory
-        const { error } = await supabase
-          .from('bot_memories')
-          .update({
-            conversation_summary: memoryData.summary,
-            user_preferences: memoryData.userPreferences,
-            important_dates: memoryData.importantDates,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('bot_id', botId)
-          .eq('user_id', userId);
-        
-        if (error) throw error;
-        
-        // Update state
-        setBotMemories(prev => ({
-          ...prev,
-          [`${botId}_${userId}`]: {
-            ...prev[`${botId}_${userId}`],
-            conversation_summary: memoryData.summary,
-            user_preferences: memoryData.userPreferences,
-            important_dates: memoryData.importantDates,
-            updated_at: new Date().toISOString()
-          }
-        }));
-      } else {
-        // Create new memory
-        const { data, error } = await supabase
-          .from('bot_memories')
-          .insert({
-            bot_id: botId,
-            user_id: userId,
-            conversation_summary: memoryData.summary,
-            user_preferences: memoryData.userPreferences,
-            important_dates: memoryData.importantDates,
-          })
-          .select()
-          .single();
-        
-        if (error) throw error;
-        
-        // Update state
-        setBotMemories(prev => ({
-          ...prev,
-          [`${botId}_${userId}`]: data
-        }));
-      }
-      
-      // Update cache
-      await AsyncStorage.setItem(
-        `cached_memory_${botId}_${userId}`, 
-        JSON.stringify({
-          ...existingMemory,
-          conversation_summary: memoryData.summary,
-          user_preferences: memoryData.userPreferences,
-          important_dates: memoryData.importantDates,
-          updated_at: new Date().toISOString()
-        })
-      );
-    } catch (error: any) {
-      console.error('Error updating bot memory:', error);
-      // Don't show alert for memory errors as they're not critical
-    }
-  };
-
-  // ========================================
-  // ADVANCED MOOD DETECTION
-  // ========================================
-  
-  const detectMood = async (text: string): Promise<any> => {
-    try {
-      // Import the detectMood function from openai.ts
-      const { detectMood: detectMoodFromAI } = await import('../services/openai');
-      return await detectMoodFromAI(text);
-    } catch (error) {
-      console.error('Error detecting mood:', error);
-      
-      // Fallback to simple mood detection
-      const lowerText = text.toLowerCase();
-      
-      if (lowerText.includes('happy') || lowerText.includes('excited') || lowerText.includes('great')) {
-        return { mood: 'happy', confidence: 0.7 };
-      } else if (lowerText.includes('sad') || lowerText.includes('down') || lowerText.includes('unhappy')) {
-        return { mood: 'sad', confidence: 0.7 };
-      } else if (lowerText.includes('angry') || lowerText.includes('mad') || lowerText.includes('frustrated')) {
-        return { mood: 'angry', confidence: 0.7 };
-      } else if (lowerText.includes('anxious') || lowerText.includes('worried') || lowerText.includes('nervous')) {
-        return { mood: 'anxious', confidence: 0.7 };
-      } else if (lowerText.includes('tired') || lowerText.includes('exhausted') || lowerText.includes('sleepy')) {
-        return { mood: 'tired', confidence: 0.7 };
-      } else {
-        return { mood: 'neutral', confidence: 0.5 };
-      }
     }
   };
 
@@ -1105,11 +1111,13 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // ========================================
-  // GENERATE SUGGESTIONS
+  // GENERATE SUGGESTIONS WITH LOADING STATE
   // ========================================
   
   const generateSuggestions = async (conversationId: string): Promise<void> => {
     try {
+      setLoadingSuggestions(true);
+      
       // Get conversation with bot details
       const { data: conversation, error: convError } = await supabase
         .from('conversations')
@@ -1147,6 +1155,8 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     } catch (error: any) {
       console.error('Error generating suggestions:', error);
       Alert.alert('Error', error.message || 'Failed to generate suggestions');
+    } finally {
+      setLoadingSuggestions(false);
     }
   };
 
@@ -1173,11 +1183,14 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // ========================================
-  // GENERATE CONVERSATION SUMMARY
+  // GENERATE CONVERSATION SUMMARY WITH LOADING STATE
   // ========================================
   
   const generateConversationSummary = async (conversationId: string): Promise<string> => {
     try {
+      setLoadingSummary(true);
+      setShowSummary(false);
+      
       // Get messages
       const { data: messages } = await supabase
         .from('messages')
@@ -1186,7 +1199,10 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         .order('created_at', { ascending: true });
       
       if (!messages || messages.length === 0) {
-        return 'No messages to summarize';
+        const noMessagesSummary = 'No messages to summarize';
+        setSummary(noMessagesSummary);
+        setShowSummary(true);
+        return noMessagesSummary;
       }
       
       // Generate summary using the renamed import
@@ -1201,11 +1217,17 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       // Update conversations list
       fetchConversations();
       
+      // Set summary state and show it
+      setSummary(summary);
+      setShowSummary(true);
+      
       return summary;
     } catch (error: any) {
       console.error('Error generating summary:', error);
       Alert.alert('Error', error.message || 'Failed to generate summary');
       return '';
+    } finally {
+      setLoadingSummary(false);
     }
   };
 
@@ -1350,16 +1372,22 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   // CONTEXT VALUE
   // ========================================
 
-  const value: ChatContextType = {
+  const value = {
     bots,
     conversations,
     currentConversation,
+    setCurrentConversation,
     messages,
     loading,
     creatingBot,
     isRecording,
     isSpeaking,
     suggestions,
+    loadingSuggestions,
+    loadingSummary,
+    summary,
+    showSummary,
+    setShowSummary,
     fetchBots,
     fetchConversations,
     fetchMessages,
@@ -1381,7 +1409,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     generateSuggestions,
     searchMessages,
     generateConversationSummary,
-  };
+  } as ChatContextType;
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 };

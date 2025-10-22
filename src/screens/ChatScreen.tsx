@@ -365,6 +365,11 @@ export const ChatScreen: React.FC = () => {
     regenerateResponse,
     conversations,
     suggestions,
+    loadingSuggestions,
+    loadingSummary,
+    summary,
+    showSummary,
+    setShowSummary,
     isRecording: isRecordingVoice,
     isSpeaking,
     addMessageReaction,
@@ -403,15 +408,23 @@ export const ChatScreen: React.FC = () => {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.headerButton}
-              onPress={() => generateSuggestions(conversationId)}
+              onPress={() => handleGenerateSuggestions()}
             >
-              <Ionicons name="bulb-outline" size={20} color="#fff" />
+              {loadingSuggestions ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="bulb-outline" size={20} color="#fff" />
+              )}
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.headerButton}
-              onPress={() => generateConversationSummary(conversationId)}
+              onPress={() => handleGenerateSummary()}
             >
-              <Ionicons name="document-text-outline" size={20} color="#fff" />
+              {loadingSummary ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="document-text-outline" size={20} color="#fff" />
+              )}
             </TouchableOpacity>
           </View>
         ),
@@ -419,7 +432,7 @@ export const ChatScreen: React.FC = () => {
     }
     
     loadMessages();
-  }, [conversationId, conversations]);
+  }, [conversationId, conversations, loadingSuggestions, loadingSummary]);
 
   const loadMessages = async () => {
     try {
@@ -636,6 +649,23 @@ export const ChatScreen: React.FC = () => {
   const handleSuggestionPress = (suggestion: string) => {
     setInputText(suggestion);
     setShowSuggestions(false);
+  };
+
+  const handleGenerateSuggestions = async () => {
+    try {
+      await generateSuggestions(conversationId);
+      setShowSuggestions(true);
+    } catch (error) {
+      console.error('Error generating suggestions:', error);
+    }
+  };
+
+  const handleGenerateSummary = async () => {
+    try {
+      await generateConversationSummary(conversationId);
+    } catch (error) {
+      console.error('Error generating summary:', error);
+    }
   };
 
   const replyingToMessage = messages.find(m => m.id === replyingTo);
@@ -880,6 +910,39 @@ export const ChatScreen: React.FC = () => {
               </View>
             ))}
           </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Summary Modal */}
+      <Modal
+        visible={showSummary}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <View style={styles.summaryContainer}>
+          <View style={styles.summaryHeader}>
+            <TouchableOpacity
+              style={styles.summaryBackButton}
+              onPress={() => setShowSummary(false)}
+            >
+              <Ionicons name="arrow-back" size={24} color="#1f2937" />
+            </TouchableOpacity>
+            
+            <Text style={styles.summaryTitle}>Conversation Summary</Text>
+          </View>
+          
+          <View style={styles.summaryContent}>
+            {loadingSummary ? (
+              <View style={styles.summaryLoading}>
+                <ActivityIndicator size="large" color="#6366f1" />
+                <Text style={styles.summaryLoadingText}>Generating summary...</Text>
+              </View>
+            ) : (
+              <View style={styles.summaryTextContainer}>
+                <Text style={styles.summaryText}>{summary}</Text>
+              </View>
+            )}
+          </View>
         </View>
       </Modal>
     </View>
@@ -1398,5 +1461,56 @@ const styles = StyleSheet.create({
   searchResultTime: {
     fontSize: 12,
     color: '#9ca3af',
+  },
+  summaryContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  summaryBackButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  summaryTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  summaryContent: {
+    flex: 1,
+    padding: 16,
+  },
+  summaryLoading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  summaryLoadingText: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginTop: 16,
+  },
+  summaryTextContainer: {
+    backgroundColor: '#f9fafb',
+    padding: 16,
+    borderRadius: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#6366f1',
+  },
+  summaryText: {
+    fontSize: 16,
+    color: '#1f2937',
+    lineHeight: 24,
   },
 });
