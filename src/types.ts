@@ -39,6 +39,24 @@ export interface AuthContextType {
 }
 
 // ========================================
+// MOOD ANALYSIS TYPE
+// ========================================
+
+export interface MoodAnalysis {
+  mood: string;
+  confidence: number;
+  emotions: {
+    joy: number;
+    sadness: number;
+    anger: number;
+    fear: number;
+    surprise: number;
+    disgust: number;
+  };
+  sentiment: number; // -1 to 1
+}
+
+// ========================================
 // BOT TYPES
 // ========================================
 
@@ -192,7 +210,7 @@ export interface ChatContextType {
   updateBot: (id: string, updates: BotUpdate) => Promise<void>;
   deleteBot: (id: string) => Promise<void>;
   createConversation: (botId: string) => Promise<string>;
-  sendMessage: (conversationId: string, content: string, attachments?: MessageAttachment[]) => Promise<void>;
+  sendMessage: (conversationId: string, content: string, attachments?: MessageAttachment[], parentMessageId?: string) => Promise<void>;
   clearChat: (conversationId: string) => Promise<void>;
   regenerateResponse: (conversationId: string) => Promise<void>;
   addMessageReaction: (messageId: string, emoji: string) => Promise<void>;

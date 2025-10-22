@@ -1,4 +1,4 @@
-import { Bot, Message, BotPersonality } from '../types';
+import { Bot, Message, BotPersonality, MoodAnalysis } from '../types';
 
 // ========================================
 // OPENAI API CONFIGURATION
@@ -16,20 +16,6 @@ if (!OPENAI_API_KEY) {
 // ========================================
 // ADVANCED MOOD DETECTION
 // ========================================
-
-export interface MoodAnalysis {
-  mood: string;
-  confidence: number;
-  emotions: {
-    joy: number;
-    sadness: number;
-    anger: number;
-    fear: number;
-    surprise: number;
-    disgust: number;
-  };
-  sentiment: number; // -1 to 1
-}
 
 export const detectMood = async (text: string): Promise<MoodAnalysis> => {
   const lowerText = text.toLowerCase();
@@ -524,6 +510,12 @@ const generateSystemPrompt = (
     if (memory.important_dates && memory.important_dates.length > 0) {
       prompt += `
   Important dates mentioned: ${memory.important_dates.join(', ')}
+      `;
+    }
+    
+    if (memory.learned_responses && memory.learned_responses.length > 0) {
+      prompt += `
+  Previous feedback and learning: ${memory.learned_responses.join('. ')}
       `;
     }
   }

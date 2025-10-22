@@ -133,7 +133,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   }, [onlineStatus]);
 
   // ========================================
-  // FETCH MESSAGES
+  // FETCH MESSAGES WITH REACTIONS
   // ========================================
   
   const fetchMessages = useCallback(async (conversationId: string): Promise<Message[]> => {
@@ -507,13 +507,14 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // ========================================
-  // SEND MESSAGE WITH RETRY MECHANISM
+  // SEND MESSAGE WITH REPLY SUPPORT
   // ========================================
   
   const sendMessage = async (
     conversationId: string, 
     content: string, 
-    attachments?: MessageAttachment[]
+    attachments?: MessageAttachment[],
+    parentMessageId?: string
   ): Promise<void> => {
     try {
       // Get current user
@@ -539,6 +540,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         conversation_id: conversationId,
         sender: 'user',
         content,
+        parent_message_id: parentMessageId,
         created_at: new Date().toISOString(),
         reactions: [],
         attachments: attachments || []
@@ -563,6 +565,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           conversation_id: conversationId,
           sender: 'user',
           content,
+          parent_message_id: parentMessageId,
         })
         .select()
         .single();
@@ -608,6 +611,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         conversation_id: conversationId,
         sender: 'bot',
         content: '',
+        parent_message_id: parentMessageId, // Bot replies to the same parent
         created_at: new Date().toISOString(),
         reactions: [],
         attachments: []
@@ -631,6 +635,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             conversation_id: conversationId,
             sender: 'bot',
             content: botResponse,
+            parent_message_id: parentMessageId, // Bot replies to the same parent
           })
           .select()
           .single();
@@ -981,7 +986,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // ========================================
-  // SUBMIT FEEDBACK
+  // SUBMIT FEEDBACK WITH LEARNING
   // ========================================
   
   const submitFeedback = async (messageId: string, score: number): Promise<void> => {
@@ -1023,8 +1028,38 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         
         console.log('Learning from feedback:', learning);
         
-        // In a real implementation, you would store this learning
-        // and use it to improve future responses
+        // Update bot memory with learning
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const botMemory = await fetchBotMemory(message.conversation.bot_id, user.id);
+          
+          if (botMemory) {
+            // Add learning to learned_responses
+            const updatedLearnedResponses = [
+              ...(botMemory.learned_responses || []),
+              learning
+            ];
+            
+            await supabase
+              .from('bot_memories')
+              .update({
+                learned_responses: updatedLearnedResponses,
+                updated_at: new Date().toISOString()
+              })
+              .eq('bot_id', message.conversation.bot_id)
+              .eq('user_id', user.id);
+            
+            // Update state
+            setBotMemories(prev => ({
+              ...prev,
+              [`${message.conversation.bot_id}_${user.id}`]: {
+                ...prev[`${message.conversation.bot_id}_${user.id}`],
+                learned_responses: updatedLearnedResponses,
+                updated_at: new Date().toISOString()
+              }
+            }));
+          }
+        }
       }
       
       // Refresh messages
@@ -1272,6 +1307,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                 conversation_id: conversationId,
                 sender: 'user',
                 content: pendingMsg.content,
+                parent_message_id: pendingMsg.parent_message_id,
               })
               .select()
               .single();
@@ -1298,6 +1334,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                 conversation_id: conversationId,
                 sender: 'bot',
                 content: botResponse,
+                parent_message_id: pendingMsg.parent_message_id,
               });
             
             // Update conversation timestamp

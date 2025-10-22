@@ -43,6 +43,7 @@ interface Message {
   reactions?: { emoji: string; count: number }[];
   attachments?: { type: string; url: string }[];
   feedback_score?: number;
+  parent_message_id?: string;
 }
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -149,9 +150,15 @@ const MessageBubble: React.FC<{
   onReaction: (messageId: string, emoji: string) => void;
   onReply: (messageId: string) => void;
   onFeedback: (messageId: string, score: number) => void;
-}> = ({ message, isUser, onReaction, onReply, onFeedback }) => {
+  messages: Message[];
+}> = ({ message, isUser, onReaction, onReply, onFeedback, messages }) => {
   const [showReactions, setShowReactions] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  
+  // Find the parent message if this is a reply
+  const parentMessage = message.parent_message_id 
+    ? messages.find(m => m.id === message.parent_message_id)
+    : null;
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
@@ -197,6 +204,21 @@ const MessageBubble: React.FC<{
       styles.messageContainer,
       isUser ? styles.userMessageContainer : styles.botMessageContainer
     ]}>
+      {/* Show parent message if this is a reply */}
+      {parentMessage && (
+        <View style={styles.parentMessageContainer}>
+          <View style={styles.parentMessageBar} />
+          <View style={styles.parentMessageContent}>
+            <Text style={styles.parentMessageLabel}>
+              {parentMessage.sender === 'user' ? 'You' : 'Bot'}
+            </Text>
+            <Text style={styles.parentMessageText} numberOfLines={2}>
+              {parentMessage.content}
+            </Text>
+          </View>
+        </View>
+      )}
+      
       <TouchableOpacity
         onLongPress={() => setShowActions(true)}
         activeOpacity={0.7}
@@ -459,10 +481,10 @@ export const ChatScreen: React.FC = () => {
     const messageText = inputText.trim();
     setInputText('');
     setIsTyping(true);
-    setReplyingTo(null);
     
     try {
-      await sendMessage(conversationId, messageText);
+      await sendMessage(conversationId, messageText, undefined, replyingTo || undefined);
+      setReplyingTo(null);
       await loadMessages();
     } catch (error) {
       console.error('Error sending message:', error);
@@ -533,6 +555,15 @@ export const ChatScreen: React.FC = () => {
     try {
       await submitFeedback(messageId, score);
       await loadMessages();
+      
+      // Show feedback to user
+      Alert.alert(
+        'Feedback Submitted',
+        score > 0 
+          ? 'Thank you for your positive feedback! I\'ll use this to improve future responses.' 
+          : 'Thank you for your feedback! I\'ll work on providing better responses in the future.',
+        [{ text: 'OK', style: 'default' }]
+      );
     } catch (error) {
       console.error('Error submitting feedback:', error);
     }
@@ -745,6 +776,7 @@ export const ChatScreen: React.FC = () => {
                 onReaction={handleReaction}
                 onReply={handleReply}
                 onFeedback={handleFeedback}
+                messages={messages}
               />
             ))
           )}
@@ -1264,6 +1296,35 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: '#6b7280',
+  },
+  parentMessageContainer: {
+    flexDirection: 'row',
+    marginBottom: 4,
+    marginLeft: isSmallDevice ? 30 : 40,
+  },
+  parentMessageBar: {
+    width: 2,
+    height: 30,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 1,
+    marginRight: 8,
+  },
+  parentMessageContent: {
+    flex: 1,
+    backgroundColor: '#f9fafb',
+    padding: 8,
+    borderRadius: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: '#e5e7eb',
+  },
+  parentMessageLabel: {
+    fontSize: 10,
+    color: '#6b7280',
+    marginBottom: 2,
+  },
+  parentMessageText: {
+    fontSize: 12,
+    color: '#6b7280',
   },
   replyingContainer: {
     flexDirection: 'row',
