@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@utils/AuthContext';
 import { RootStackParamList, MainTabParamList } from '../types';
+import { ActivityIndicator, View, StyleSheet } from 'react-native';
 
 // Import screens
 import { OnboardingScreen } from '@screens/OnboardingScreen';
@@ -18,7 +19,9 @@ import { ProfileScreen } from '@screens/ProfileScreen';
 import { BotCreationScreen } from '@screens/BotCreationScreen';
 import { BotEditScreen } from '@screens/BotEditScreen';
 import { ChatScreen } from '@screens/ChatScreen';
-import { ActivityIndicator, View, StyleSheet } from 'react-native';
+import { MessageThreadScreen } from '@screens/MessageThreadScreen';
+import { VoiceSettingsScreen } from '@screens/VoiceSettingsScreen';
+import { AvatarCreationScreen } from '@screens/AvatarCreationScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -147,6 +150,36 @@ export const AppNavigator = () => {
               component={ChatScreen} 
               options={{ 
                 headerShown: false,
+              }} 
+            />
+            <Stack.Screen 
+              name="MessageThread" 
+              component={MessageThreadScreen} 
+              options={{ 
+                headerShown: true,
+                title: 'Thread',
+                headerStyle: { backgroundColor: '#6366f1' },
+                headerTintColor: '#fff',
+              }} 
+            />
+            <Stack.Screen 
+              name="VoiceSettings" 
+              component={VoiceSettingsScreen} 
+              options={{ 
+                headerShown: true,
+                title: 'Voice Settings',
+                headerStyle: { backgroundColor: '#6366f1' },
+                headerTintColor: '#fff',
+              }} 
+            />
+            <Stack.Screen 
+              name="AvatarCreation" 
+              component={AvatarCreationScreen} 
+              options={{ 
+                headerShown: true,
+                title: 'Avatar Creation',
+                headerStyle: { backgroundColor: '#6366f1' },
+                headerTintColor: '#fff',
               }} 
             />
           </>

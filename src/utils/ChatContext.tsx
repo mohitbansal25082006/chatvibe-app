@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { supabase } from '../config/supabase';
 import { 
   Bot, 
@@ -6,10 +6,24 @@ import {
   BotUpdate, 
   Conversation, 
   Message, 
-  ChatContextType 
+  MessageReaction,
+  MessageThread,
+  MessageAttachment,
+  ChatSuggestion,
+  ChatContextType,
+  BotMemory
 } from '../types';
-import { generateBotResponse } from '../services/openai';
+import { 
+  generateBotResponse, 
+  generateConversationSummary as generateSummaryAI,
+  generateSmartSuggestions,
+  learnFromFeedback,
+  extractMemoryFromConversation
+} from '../services/openai';
 import { Alert } from 'react-native';
+import * as Speech from 'expo-speech';
+import { Audio } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ========================================
 // CREATE CONTEXT
@@ -28,12 +42,20 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [creatingBot, setCreatingBot] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [suggestions, setSuggestions] = useState<ChatSuggestion[]>([]);
+  const [onlineStatus, setOnlineStatus] = useState(true);
+  const [pendingMessages, setPendingMessages] = useState<{[key: string]: Message[]}>({});
+  const [retryCount, setRetryCount] = useState<{[key: string]: number}>({});
+  const [botMemories, setBotMemories] = useState<{[key: string]: BotMemory}>({});
 
   // ========================================
   // FETCH BOTS
   // ========================================
   
-  const fetchBots = async (): Promise<void> => {
+  const fetchBots = useCallback(async (): Promise<void> => {
     try {
       const { data, error } = await supabase
         .from('bots')
@@ -42,17 +64,34 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
 
       if (error) throw error;
       setBots(data || []);
+      
+      // Cache bots locally
+      await AsyncStorage.setItem('cached_bots', JSON.stringify(data || []));
     } catch (error: any) {
       console.error('Error fetching bots:', error);
-      Alert.alert('Error', 'Failed to load bots');
+      
+      // Try to load from cache if online fetch fails
+      try {
+        const cachedBots = await AsyncStorage.getItem('cached_bots');
+        if (cachedBots) {
+          setBots(JSON.parse(cachedBots));
+        }
+      } catch (cacheError) {
+        console.error('Error loading cached bots:', cacheError);
+      }
+      
+      // Only show alert if we're online
+      if (onlineStatus) {
+        Alert.alert('Error', 'Failed to load bots');
+      }
     }
-  };
+  }, [onlineStatus]);
 
   // ========================================
   // FETCH CONVERSATIONS
   // ========================================
   
-  const fetchConversations = async (): Promise<void> => {
+  const fetchConversations = useCallback(async (): Promise<void> => {
     try {
       const { data, error } = await supabase
         .from('conversations')
@@ -64,33 +103,137 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
 
       if (error) throw error;
       setConversations(data || []);
+      
+      // Cache conversations locally
+      await AsyncStorage.setItem('cached_conversations', JSON.stringify(data || []));
     } catch (error: any) {
       console.error('Error fetching conversations:', error);
-      Alert.alert('Error', 'Failed to load conversations');
+      
+      // Try to load from cache if online fetch fails
+      try {
+        const cachedConversations = await AsyncStorage.getItem('cached_conversations');
+        if (cachedConversations) {
+          setConversations(JSON.parse(cachedConversations));
+        }
+      } catch (cacheError) {
+        console.error('Error loading cached conversations:', cacheError);
+      }
+      
+      // Only show alert if we're online
+      if (onlineStatus) {
+        Alert.alert('Error', 'Failed to load conversations');
+      }
     }
-  };
+  }, [onlineStatus]);
 
   // ========================================
   // FETCH MESSAGES
   // ========================================
   
-const fetchMessages = async (conversationId: string): Promise<Message[]> => {
-  try {
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
+  const fetchMessages = useCallback(async (conversationId: string): Promise<Message[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select(`
+          *,
+          reactions:message_reactions(*),
+          attachments:message_attachments(*)
+        `)
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true });
 
-    if (error) throw error;
-    setMessages(data || []);
-    return data || [];
-  } catch (error: any) {
-    console.error('Error fetching messages:', error);
-    Alert.alert('Error', 'Failed to load messages');
-    return [];
-  }
-};
+      if (error) throw error;
+      
+      // Process the data to include reactions and attachments
+      const processedMessages = data?.map(msg => ({
+        ...msg,
+        reactions: msg.reactions || [],
+        attachments: msg.attachments || []
+      })) || [];
+      
+      setMessages(processedMessages);
+      
+      // Cache messages locally
+      await AsyncStorage.setItem(`cached_messages_${conversationId}`, JSON.stringify(processedMessages));
+      
+      return processedMessages;
+    } catch (error: any) {
+      console.error('Error fetching messages:', error);
+      
+      // Try to load from cache if online fetch fails
+      try {
+        const cachedMessages = await AsyncStorage.getItem(`cached_messages_${conversationId}`);
+        if (cachedMessages) {
+          const parsedMessages = JSON.parse(cachedMessages);
+          setMessages(parsedMessages);
+          return parsedMessages;
+        }
+      } catch (cacheError) {
+        console.error('Error loading cached messages:', cacheError);
+      }
+      
+      // Only show alert if we're online
+      if (onlineStatus) {
+        Alert.alert('Error', 'Failed to load messages');
+      }
+      
+      return [];
+    }
+  }, [onlineStatus]);
+
+  // ========================================
+  // FETCH BOT MEMORY
+  // ========================================
+  
+  const fetchBotMemory = useCallback(async (botId: string, userId: string): Promise<BotMemory | null> => {
+    try {
+      // Check if we already have this memory in state
+      if (botMemories[`${botId}_${userId}`]) {
+        return botMemories[`${botId}_${userId}`];
+      }
+      
+      const { data, error } = await supabase
+        .from('bot_memories')
+        .select('*')
+        .eq('bot_id', botId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      
+      if (data) {
+        // Cache memory in state
+        setBotMemories(prev => ({
+          ...prev,
+          [`${botId}_${userId}`]: data
+        }));
+        
+        // Cache memory locally
+        await AsyncStorage.setItem(`cached_memory_${botId}_${userId}`, JSON.stringify(data));
+      }
+      
+      return data || null;
+    } catch (error: any) {
+      console.error('Error fetching bot memory:', error);
+      
+      // Try to load from cache if online fetch fails
+      try {
+        const cachedMemory = await AsyncStorage.getItem(`cached_memory_${botId}_${userId}`);
+        if (cachedMemory) {
+          const parsedMemory = JSON.parse(cachedMemory);
+          setBotMemories(prev => ({
+            ...prev,
+            [`${botId}_${userId}`]: parsedMemory
+          }));
+          return parsedMemory;
+        }
+      } catch (cacheError) {
+        console.error('Error loading cached memory:', cacheError);
+      }
+      
+      return null;
+    }
+  }, [botMemories]);
 
   // ========================================
   // CREATE BOT
@@ -119,6 +262,11 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
       // Update local state
       setBots(prev => [data, ...prev]);
       
+      // Update cache
+      const cachedBots = await AsyncStorage.getItem('cached_bots');
+      const bots = cachedBots ? JSON.parse(cachedBots) : [];
+      await AsyncStorage.setItem('cached_bots', JSON.stringify([data, ...bots]));
+      
       Alert.alert('Success', 'Bot created successfully!');
     } catch (error: any) {
       console.error('Error creating bot:', error);
@@ -146,6 +294,12 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
       // Update local state
       setBots(prev => prev.map(bot => bot.id === id ? data : bot));
       
+      // Update cache
+      const cachedBots = await AsyncStorage.getItem('cached_bots');
+      const bots = cachedBots ? JSON.parse(cachedBots) : [];
+      const updatedBots = bots.map((bot: Bot) => bot.id === id ? data : bot);
+      await AsyncStorage.setItem('cached_bots', JSON.stringify(updatedBots));
+      
       Alert.alert('Success', 'Bot updated successfully!');
     } catch (error: any) {
       console.error('Error updating bot:', error);
@@ -168,6 +322,12 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
       
       // Update local state
       setBots(prev => prev.filter(bot => bot.id !== id));
+      
+      // Update cache
+      const cachedBots = await AsyncStorage.getItem('cached_bots');
+      const bots = cachedBots ? JSON.parse(cachedBots) : [];
+      const filteredBots = bots.filter((bot: Bot) => bot.id !== id);
+      await AsyncStorage.setItem('cached_bots', JSON.stringify(filteredBots));
       
       Alert.alert('Success', 'Bot deleted successfully!');
     } catch (error: any) {
@@ -213,6 +373,11 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
       // Update local state
       setConversations(prev => [data, ...prev]);
       
+      // Update cache
+      const cachedConversations = await AsyncStorage.getItem('cached_conversations');
+      const conversations = cachedConversations ? JSON.parse(cachedConversations) : [];
+      await AsyncStorage.setItem('cached_conversations', JSON.stringify([data, ...conversations]));
+      
       return data.id;
     } catch (error: any) {
       console.error('Error creating conversation:', error);
@@ -222,10 +387,14 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
   };
 
   // ========================================
-  // SEND MESSAGE
+  // SEND MESSAGE WITH RETRY MECHANISM
   // ========================================
   
-  const sendMessage = async (conversationId: string, content: string): Promise<void> => {
+  const sendMessage = async (
+    conversationId: string, 
+    content: string, 
+    attachments?: MessageAttachment[]
+  ): Promise<void> => {
     try {
       // Get current user
       const { data: { user } } = await supabase.auth.getUser();
@@ -243,7 +412,31 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
       
       if (convError || !conversation?.bot) throw convError || new Error('Conversation not found');
       
-      // Add user message
+      // Create a temporary user message with a unique ID
+      const tempUserMessageId = `temp-user-${Date.now()}`;
+      const tempUserMessage: Message = {
+        id: tempUserMessageId,
+        conversation_id: conversationId,
+        sender: 'user',
+        content,
+        created_at: new Date().toISOString(),
+        reactions: [],
+        attachments: attachments || []
+      };
+      
+      // Add temporary message to local state
+      setMessages(prev => [...prev, tempUserMessage]);
+      
+      // Add to pending messages if offline
+      if (!onlineStatus) {
+        setPendingMessages(prev => ({
+          ...prev,
+          [conversationId]: [...(prev[conversationId] || []), tempUserMessage]
+        }));
+        return;
+      }
+      
+      // Add user message to database
       const { data: userMessage, error: userMsgError } = await supabase
         .from('messages')
         .insert({
@@ -256,8 +449,26 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
       
       if (userMsgError) throw userMsgError;
       
-      // Update local messages
-      setMessages(prev => [...prev, userMessage]);
+      // Add attachments if provided
+      if (attachments && attachments.length > 0) {
+        for (const attachment of attachments) {
+          await supabase
+            .from('message_attachments')
+            .insert({
+              message_id: userMessage.id,
+              type: attachment.type,
+              url: attachment.url,
+              metadata: attachment.metadata,
+            });
+        }
+      }
+      
+      // Replace temporary message with real one
+      setMessages(prev => prev.map(msg => 
+        msg.id === tempUserMessageId 
+          ? { ...userMessage, reactions: [], attachments: attachments || [] }
+          : msg
+      ));
       
       // Get recent messages for context
       const { data: recentMessages } = await supabase
@@ -267,39 +478,226 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
         .order('created_at', { ascending: false })
         .limit(10);
       
-      // Generate bot response
-      const botResponse = await generateBotResponse(
-        conversation.bot,
-        recentMessages?.reverse() || []
-      );
+      // Get bot memory
+      const botMemory = await fetchBotMemory(conversation.bot_id, user.id);
       
-      // Add bot message
-      const { data: botMessage, error: botMsgError } = await supabase
-        .from('messages')
-        .insert({
+      // Create a temporary bot message
+      const tempBotMessageId = `temp-bot-${Date.now()}`;
+      const tempBotMessage: Message = {
+        id: tempBotMessageId,
+        conversation_id: conversationId,
+        sender: 'bot',
+        content: '',
+        created_at: new Date().toISOString(),
+        reactions: [],
+        attachments: []
+      };
+      
+      // Add temporary bot message to show typing indicator
+      setMessages(prev => [...prev, tempBotMessage]);
+      
+      try {
+        // Generate bot response
+        const botResponse = await generateBotResponse(
+          conversation.bot,
+          recentMessages?.reverse() || [],
+          botMemory || undefined
+        );
+        
+        // Add bot message to database
+        const { data: botMessage, error: botMsgError } = await supabase
+          .from('messages')
+          .insert({
+            conversation_id: conversationId,
+            sender: 'bot',
+            content: botResponse,
+          })
+          .select()
+          .single();
+        
+        if (botMsgError) throw botMsgError;
+        
+        // Replace temporary bot message with real one
+        setMessages(prev => prev.map(msg => 
+          msg.id === tempBotMessageId 
+            ? { ...botMessage, reactions: [], attachments: [] }
+            : msg
+        ));
+        
+        // Update conversation timestamp and mood
+        const userMood = await detectMood(content);
+        await supabase
+          .from('conversations')
+          .update({ 
+            updated_at: new Date().toISOString(),
+            last_mood: userMood.mood
+          })
+          .eq('id', conversationId);
+        
+        // Update bot memory if needed
+        if (recentMessages && recentMessages.length >= 5) {
+          await updateBotMemory(conversation.bot_id, user.id, recentMessages);
+        }
+        
+        // Reset retry count for this conversation
+        setRetryCount(prev => ({
+          ...prev,
+          [conversationId]: 0
+        }));
+        
+        // Update conversations list
+        fetchConversations();
+      } catch (botError) {
+        console.error('Error generating bot response:', botError);
+        
+        // Remove temporary bot message
+        setMessages(prev => prev.filter(msg => msg.id !== tempBotMessageId));
+        
+        // Add error message
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
           conversation_id: conversationId,
           sender: 'bot',
-          content: botResponse,
-        })
-        .select()
-        .single();
-      
-      if (botMsgError) throw botMsgError;
-      
-      // Update local messages
-      setMessages(prev => [...prev, botMessage]);
-      
-      // Update conversation timestamp
-      await supabase
-        .from('conversations')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', conversationId);
-      
-      // Update conversations list
-      fetchConversations();
+          content: 'Sorry, I had trouble generating a response. Please try again.',
+          created_at: new Date().toISOString(),
+          reactions: [],
+          attachments: []
+        };
+        
+        setMessages(prev => [...prev, errorMessage]);
+        
+        // Increment retry count
+        const newRetryCount = (retryCount[conversationId] || 0) + 1;
+        setRetryCount(prev => ({
+          ...prev,
+          [conversationId]: newRetryCount
+        }));
+        
+        // If we haven't retried too many times, add to pending messages
+        if (newRetryCount < 3) {
+          setPendingMessages(prev => ({
+            ...prev,
+            [conversationId]: [...(prev[conversationId] || []), userMessage]
+          }));
+        }
+      }
     } catch (error: any) {
       console.error('Error sending message:', error);
       Alert.alert('Error', error.message || 'Failed to send message');
+    }
+  };
+
+  // ========================================
+  // UPDATE BOT MEMORY WITH ADVANCED EXTRACTION
+  // ========================================
+  
+  const updateBotMemory = async (botId: string, userId: string, messages: any[]): Promise<void> => {
+    try {
+      // Use advanced memory extraction
+      const memoryData = await extractMemoryFromConversation(messages);
+      
+      // Check if memory already exists
+      const { data: existingMemory } = await supabase
+        .from('bot_memories')
+        .select('*')
+        .eq('bot_id', botId)
+        .eq('user_id', userId)
+        .maybeSingle();
+      
+      if (existingMemory) {
+        // Update existing memory
+        const { error } = await supabase
+          .from('bot_memories')
+          .update({
+            conversation_summary: memoryData.summary,
+            user_preferences: memoryData.userPreferences,
+            important_dates: memoryData.importantDates,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('bot_id', botId)
+          .eq('user_id', userId);
+        
+        if (error) throw error;
+        
+        // Update state
+        setBotMemories(prev => ({
+          ...prev,
+          [`${botId}_${userId}`]: {
+            ...prev[`${botId}_${userId}`],
+            conversation_summary: memoryData.summary,
+            user_preferences: memoryData.userPreferences,
+            important_dates: memoryData.importantDates,
+            updated_at: new Date().toISOString()
+          }
+        }));
+      } else {
+        // Create new memory
+        const { data, error } = await supabase
+          .from('bot_memories')
+          .insert({
+            bot_id: botId,
+            user_id: userId,
+            conversation_summary: memoryData.summary,
+            user_preferences: memoryData.userPreferences,
+            important_dates: memoryData.importantDates,
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        
+        // Update state
+        setBotMemories(prev => ({
+          ...prev,
+          [`${botId}_${userId}`]: data
+        }));
+      }
+      
+      // Update cache
+      await AsyncStorage.setItem(
+        `cached_memory_${botId}_${userId}`, 
+        JSON.stringify({
+          ...existingMemory,
+          conversation_summary: memoryData.summary,
+          user_preferences: memoryData.userPreferences,
+          important_dates: memoryData.importantDates,
+          updated_at: new Date().toISOString()
+        })
+      );
+    } catch (error: any) {
+      console.error('Error updating bot memory:', error);
+      // Don't show alert for memory errors as they're not critical
+    }
+  };
+
+  // ========================================
+  // ADVANCED MOOD DETECTION
+  // ========================================
+  
+  const detectMood = async (text: string): Promise<any> => {
+    try {
+      // Import the detectMood function from openai.ts
+      const { detectMood: detectMoodFromAI } = await import('../services/openai');
+      return await detectMoodFromAI(text);
+    } catch (error) {
+      console.error('Error detecting mood:', error);
+      
+      // Fallback to simple mood detection
+      const lowerText = text.toLowerCase();
+      
+      if (lowerText.includes('happy') || lowerText.includes('excited') || lowerText.includes('great')) {
+        return { mood: 'happy', confidence: 0.7 };
+      } else if (lowerText.includes('sad') || lowerText.includes('down') || lowerText.includes('unhappy')) {
+        return { mood: 'sad', confidence: 0.7 };
+      } else if (lowerText.includes('angry') || lowerText.includes('mad') || lowerText.includes('frustrated')) {
+        return { mood: 'angry', confidence: 0.7 };
+      } else if (lowerText.includes('anxious') || lowerText.includes('worried') || lowerText.includes('nervous')) {
+        return { mood: 'anxious', confidence: 0.7 };
+      } else if (lowerText.includes('tired') || lowerText.includes('exhausted') || lowerText.includes('sleepy')) {
+        return { mood: 'tired', confidence: 0.7 };
+      } else {
+        return { mood: 'neutral', confidence: 0.5 };
+      }
     }
   };
 
@@ -318,6 +716,9 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
       
       // Update local state
       setMessages([]);
+      
+      // Clear cache
+      await AsyncStorage.removeItem(`cached_messages_${conversationId}`);
       
       Alert.alert('Success', 'Chat cleared successfully!');
     } catch (error: any) {
@@ -379,41 +780,554 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
         .order('created_at', { ascending: false })
         .limit(10);
       
-      // Generate new bot response
-      const botResponse = await generateBotResponse(
-        conversation.bot,
-        recentMessages?.reverse() || []
-      );
+      // Get bot memory
+      const botMemory = await fetchBotMemory(conversation.bot_id, user.id);
       
-      // Add new bot message
-      const { data: botMessage, error: botMsgError } = await supabase
-        .from('messages')
-        .insert({
+      // Create a temporary bot message
+      const tempBotMessageId = `temp-bot-${Date.now()}`;
+      const tempBotMessage: Message = {
+        id: tempBotMessageId,
+        conversation_id: conversationId,
+        sender: 'bot',
+        content: '',
+        created_at: new Date().toISOString(),
+        reactions: [],
+        attachments: []
+      };
+      
+      // Add temporary bot message to show typing indicator
+      setMessages(prev => [...prev, tempBotMessage]);
+      
+      try {
+        // Generate new bot response
+        const botResponse = await generateBotResponse(
+          conversation.bot,
+          recentMessages?.reverse() || [],
+          botMemory || undefined
+        );
+        
+        // Add new bot message
+        const { data: botMessage, error: botMsgError } = await supabase
+          .from('messages')
+          .insert({
+            conversation_id: conversationId,
+            sender: 'bot',
+            content: botResponse,
+          })
+          .select()
+          .single();
+        
+        if (botMsgError) throw botMsgError;
+        
+        // Replace temporary bot message with real one
+        setMessages(prev => prev.map(msg => 
+          msg.id === tempBotMessageId 
+            ? { ...botMessage, reactions: [], attachments: [] }
+            : msg
+        ));
+        
+        // Update conversation timestamp
+        await supabase
+          .from('conversations')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', conversationId);
+        
+        // Update conversations list
+        fetchConversations();
+      } catch (botError) {
+        console.error('Error regenerating response:', botError);
+        
+        // Remove temporary bot message
+        setMessages(prev => prev.filter(msg => msg.id !== tempBotMessageId));
+        
+        // Add error message
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
           conversation_id: conversationId,
           sender: 'bot',
-          content: botResponse,
-        })
-        .select()
-        .single();
-      
-      if (botMsgError) throw botMsgError;
-      
-      // Update local messages
-      setMessages(prev => [...prev, botMessage]);
-      
-      // Update conversation timestamp
-      await supabase
-        .from('conversations')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', conversationId);
-      
-      // Update conversations list
-      fetchConversations();
+          content: 'Sorry, I had trouble generating a response. Please try again.',
+          created_at: new Date().toISOString(),
+          reactions: [],
+          attachments: []
+        };
+        
+        setMessages(prev => [...prev, errorMessage]);
+      }
     } catch (error: any) {
       console.error('Error regenerating response:', error);
       Alert.alert('Error', error.message || 'Failed to regenerate response');
     }
   };
+
+  // ========================================
+  // ADD MESSAGE REACTION
+  // ========================================
+  
+  const addMessageReaction = async (messageId: string, emoji: string): Promise<void> => {
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User not authenticated');
+      
+      // Check if reaction already exists
+      const { data: existingReaction } = await supabase
+        .from('message_reactions')
+        .select('*')
+        .eq('message_id', messageId)
+        .eq('user_id', user.id)
+        .eq('emoji', emoji)
+        .maybeSingle();
+      
+      if (existingReaction) {
+        // Reaction already exists, remove it
+        await supabase
+          .from('message_reactions')
+          .delete()
+          .eq('id', existingReaction.id);
+      } else {
+        // Add new reaction
+        await supabase
+          .from('message_reactions')
+          .insert({
+            message_id: messageId,
+            emoji,
+            user_id: user.id,
+          });
+      }
+      
+      // Refresh messages
+      const conversationId = messages.find(m => m.id === messageId)?.conversation_id;
+      if (conversationId) {
+        await fetchMessages(conversationId);
+      }
+    } catch (error: any) {
+      console.error('Error adding reaction:', error);
+      Alert.alert('Error', error.message || 'Failed to add reaction');
+    }
+  };
+
+  // ========================================
+  // REMOVE MESSAGE REACTION
+  // ========================================
+  
+  const removeMessageReaction = async (messageId: string, emoji: string): Promise<void> => {
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User not authenticated');
+      
+      // Remove reaction
+      await supabase
+        .from('message_reactions')
+        .delete()
+        .eq('message_id', messageId)
+        .eq('user_id', user.id)
+        .eq('emoji', emoji);
+      
+      // Refresh messages
+      const conversationId = messages.find(m => m.id === messageId)?.conversation_id;
+      if (conversationId) {
+        await fetchMessages(conversationId);
+      }
+    } catch (error: any) {
+      console.error('Error removing reaction:', error);
+      Alert.alert('Error', error.message || 'Failed to remove reaction');
+    }
+  };
+
+  // ========================================
+  // CREATE MESSAGE THREAD
+  // ========================================
+  
+  const createMessageThread = async (messageId: string): Promise<string> => {
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User not authenticated');
+      
+      // Get message details
+      const { data: message } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('id', messageId)
+        .single();
+      
+      if (!message) throw new Error('Message not found');
+      
+      // Create thread
+      const { data, error } = await supabase
+        .from('message_threads')
+        .insert({
+          parent_message_id: messageId,
+          conversation_id: message.conversation_id,
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      return data.id;
+    } catch (error: any) {
+      console.error('Error creating thread:', error);
+      Alert.alert('Error', error.message || 'Failed to create thread');
+      throw error;
+    }
+  };
+
+  // ========================================
+  // SUBMIT FEEDBACK
+  // ========================================
+  
+  const submitFeedback = async (messageId: string, score: number): Promise<void> => {
+    try {
+      // Update message feedback
+      await supabase
+        .from('messages')
+        .update({ feedback_score: score })
+        .eq('id', messageId);
+      
+      // Get message details for learning
+      const { data: message } = await supabase
+        .from('messages')
+        .select(`
+          *,
+          conversation:conversation_id(
+            *,
+            bot:bot_id(*)
+          )
+        `)
+        .eq('id', messageId)
+        .single();
+      
+      if (message && message.conversation && message.conversation.bot) {
+        // Get recent messages for context
+        const { data: recentMessages } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', message.conversation_id)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        
+        // Learn from feedback
+        const learning = await learnFromFeedback(
+          message.conversation.bot,
+          recentMessages || [],
+          score
+        );
+        
+        console.log('Learning from feedback:', learning);
+        
+        // In a real implementation, you would store this learning
+        // and use it to improve future responses
+      }
+      
+      // Refresh messages
+      const conversationId = messages.find(m => m.id === messageId)?.conversation_id;
+      if (conversationId) {
+        await fetchMessages(conversationId);
+      }
+    } catch (error: any) {
+      console.error('Error submitting feedback:', error);
+      Alert.alert('Error', error.message || 'Failed to submit feedback');
+    }
+  };
+
+  // ========================================
+  // VOICE RECORDING
+  // ========================================
+  
+  const startRecording = async (): Promise<void> => {
+    try {
+      console.log('Requesting permissions..');
+      await Audio.requestPermissionsAsync();
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      console.log('Starting recording..');
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      setRecording(recording);
+      setIsRecording(true);
+      console.log('Recording started');
+    } catch (err) {
+      console.error('Failed to start recording', err);
+      Alert.alert('Error', 'Failed to start recording');
+    }
+  };
+
+  const stopRecording = async (): Promise<void> => {
+    console.log('Stopping recording..');
+    if (!recording) return;
+    
+    setRecording(null);
+    setIsRecording(false);
+    await recording.stopAndUnloadAsync();
+    const uri = recording.getURI();
+    console.log('Recording stopped and stored at', uri);
+    
+    // In a real implementation, you would process the recording
+    // and convert it to text using a speech-to-text service
+  };
+
+  // ========================================
+  // TEXT-TO-SPEECH
+  // ========================================
+  
+  const speakText = async (text: string, voiceId?: string): Promise<void> => {
+    try {
+      setIsSpeaking(true);
+      
+      const options: Speech.SpeechOptions = {
+        voice: voiceId,
+        pitch: 1.0,
+        rate: 0.9,
+      };
+      
+      await Speech.speak(text, options);
+    } catch (error) {
+      console.error('Error with text-to-speech:', error);
+      Alert.alert('Error', 'Failed to speak text');
+    } finally {
+      setIsSpeaking(false);
+    }
+  };
+
+  const stopSpeaking = async (): Promise<void> => {
+    try {
+      await Speech.stop();
+      setIsSpeaking(false);
+    } catch (error) {
+      console.error('Error stopping speech:', error);
+    }
+  };
+
+  // ========================================
+  // GENERATE SUGGESTIONS
+  // ========================================
+  
+  const generateSuggestions = async (conversationId: string): Promise<void> => {
+    try {
+      // Get conversation with bot details
+      const { data: conversation, error: convError } = await supabase
+        .from('conversations')
+        .select(`
+          *,
+          bot:bot_id(*)
+        `)
+        .eq('id', conversationId)
+        .single();
+      
+      if (convError || !conversation?.bot) throw convError || new Error('Conversation not found');
+      
+      // Get recent messages
+      const { data: recentMessages } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      // Generate suggestions
+      const suggestionsText = await generateSmartSuggestions(
+        conversation.bot,
+        recentMessages || []
+      );
+      
+      // Convert to ChatSuggestion format
+      const chatSuggestions: ChatSuggestion[] = suggestionsText.map((text, index) => ({
+        id: `suggestion-${index}`,
+        text,
+        category: index % 3 === 0 ? 'question' : index % 3 === 1 ? 'statement' : 'action',
+      }));
+      
+      setSuggestions(chatSuggestions);
+    } catch (error: any) {
+      console.error('Error generating suggestions:', error);
+      Alert.alert('Error', error.message || 'Failed to generate suggestions');
+    }
+  };
+
+  // ========================================
+  // SEARCH MESSAGES
+  // ========================================
+  
+  const searchMessages = async (conversationId: string, query: string): Promise<Message[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .ilike('content', `%${query}%`)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data || [];
+    } catch (error: any) {
+      console.error('Error searching messages:', error);
+      Alert.alert('Error', error.message || 'Failed to search messages');
+      return [];
+    }
+  };
+
+  // ========================================
+  // GENERATE CONVERSATION SUMMARY
+  // ========================================
+  
+  const generateConversationSummary = async (conversationId: string): Promise<string> => {
+    try {
+      // Get messages
+      const { data: messages } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true });
+      
+      if (!messages || messages.length === 0) {
+        return 'No messages to summarize';
+      }
+      
+      // Generate summary using the renamed import
+      const summary = await generateSummaryAI(messages);
+      
+      // Update conversation with summary
+      await supabase
+        .from('conversations')
+        .update({ summary })
+        .eq('id', conversationId);
+      
+      // Update conversations list
+      fetchConversations();
+      
+      return summary;
+    } catch (error: any) {
+      console.error('Error generating summary:', error);
+      Alert.alert('Error', error.message || 'Failed to generate summary');
+      return '';
+    }
+  };
+
+  // ========================================
+  // SYNC PENDING MESSAGES
+  // ========================================
+  
+  const syncPendingMessages = useCallback(async (): Promise<void> => {
+    if (!onlineStatus) return;
+    
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      
+      // Process each conversation with pending messages
+      for (const [conversationId, pendingMsgs] of Object.entries(pendingMessages)) {
+        if (pendingMsgs.length === 0) continue;
+        
+        // Get conversation details
+        const { data: conversation } = await supabase
+          .from('conversations')
+          .select(`
+            *,
+            bot:bot_id(*)
+          `)
+          .eq('id', conversationId)
+          .single();
+        
+        if (!conversation?.bot) continue;
+        
+        // Get bot memory
+        const botMemory = await fetchBotMemory(conversation.bot_id, user.id);
+        
+        // Process each pending message
+        for (const pendingMsg of pendingMsgs) {
+          try {
+            // Add user message to database
+            const { data: userMessage } = await supabase
+              .from('messages')
+              .insert({
+                conversation_id: conversationId,
+                sender: 'user',
+                content: pendingMsg.content,
+              })
+              .select()
+              .single();
+            
+            // Get recent messages for context
+            const { data: recentMessages } = await supabase
+              .from('messages')
+              .select('*')
+              .eq('conversation_id', conversationId)
+              .order('created_at', { ascending: false })
+              .limit(10);
+            
+            // Generate bot response
+            const botResponse = await generateBotResponse(
+              conversation.bot,
+              recentMessages?.reverse() || [],
+              botMemory || undefined
+            );
+            
+            // Add bot message to database
+            await supabase
+              .from('messages')
+              .insert({
+                conversation_id: conversationId,
+                sender: 'bot',
+                content: botResponse,
+              });
+            
+            // Update conversation timestamp
+            await supabase
+              .from('conversations')
+              .update({ updated_at: new Date().toISOString() })
+              .eq('id', conversationId);
+          } catch (msgError) {
+            console.error('Error syncing pending message:', msgError);
+          }
+        }
+        
+        // Clear pending messages for this conversation
+        setPendingMessages(prev => {
+          const newPending = { ...prev };
+          delete newPending[conversationId];
+          return newPending;
+        });
+      }
+      
+      // Refresh conversations and messages
+      fetchConversations();
+      if (currentConversation) {
+        fetchMessages(currentConversation.id);
+      }
+    } catch (error: any) {
+      console.error('Error syncing pending messages:', error);
+    }
+  }, [onlineStatus, pendingMessages, currentConversation, fetchBotMemory, fetchConversations, fetchMessages]);
+
+  // ========================================
+  // MONITOR ONLINE STATUS
+  // ========================================
+  
+  useEffect(() => {
+    const handleConnectivityChange = (isConnected: boolean) => {
+      setOnlineStatus(isConnected);
+      
+      if (isConnected) {
+        // Sync pending messages when coming back online
+        syncPendingMessages();
+      }
+    };
+    
+    // In a real implementation, you would use NetInfo to monitor connectivity
+    // For now, we'll just assume we're online
+    handleConnectivityChange(true);
+    
+    return () => {
+      // Cleanup
+    };
+  }, [syncPendingMessages]);
 
   // ========================================
   // INITIALIZE DATA
@@ -430,7 +1344,7 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
     };
 
     initializeData();
-  }, []);
+  }, [fetchBots, fetchConversations]);
 
   // ========================================
   // CONTEXT VALUE
@@ -443,6 +1357,9 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
     messages,
     loading,
     creatingBot,
+    isRecording,
+    isSpeaking,
+    suggestions,
     fetchBots,
     fetchConversations,
     fetchMessages,
@@ -453,6 +1370,17 @@ const fetchMessages = async (conversationId: string): Promise<Message[]> => {
     sendMessage,
     clearChat,
     regenerateResponse,
+    addMessageReaction,
+    removeMessageReaction,
+    createMessageThread,
+    submitFeedback,
+    startRecording,
+    stopRecording,
+    speakText,
+    stopSpeaking,
+    generateSuggestions,
+    searchMessages,
+    generateConversationSummary,
   };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
