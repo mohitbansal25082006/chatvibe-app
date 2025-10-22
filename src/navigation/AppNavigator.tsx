@@ -13,7 +13,11 @@ import { SignUpScreen } from '@screens/SignUpScreen';
 import { ForgotPasswordScreen } from '@screens/ForgotPasswordScreen';
 import { ProfileSetupScreen } from '@screens/ProfileSetupScreen';
 import { HomeScreen } from '@screens/HomeScreen';
+import { BotsScreen } from '@screens/BotsScreen';
 import { ProfileScreen } from '@screens/ProfileScreen';
+import { BotCreationScreen } from '@screens/BotCreationScreen';
+import { BotEditScreen } from '@screens/BotEditScreen';
+import { ChatScreen } from '@screens/ChatScreen';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -50,6 +54,15 @@ const MainTabs = () => {
         options={{
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Bots"
+        component={BotsScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="chatbubbles" size={size} color={color} />
           ),
         }}
       />
@@ -107,7 +120,36 @@ export const AppNavigator = () => {
           // ========================================
           // MAIN APP (Logged In Users with Profile)
           // ========================================
-          <Stack.Screen name="Main" component={MainTabs} />
+          <>
+            <Stack.Screen name="Main" component={MainTabs} />
+            <Stack.Screen 
+              name="BotCreation" 
+              component={BotCreationScreen} 
+              options={{ 
+                headerShown: true,
+                title: 'Create Bot',
+                headerStyle: { backgroundColor: '#6366f1' },
+                headerTintColor: '#fff',
+              }} 
+            />
+            <Stack.Screen 
+              name="BotEdit" 
+              component={BotEditScreen} 
+              options={{ 
+                headerShown: true,
+                title: 'Edit Bot',
+                headerStyle: { backgroundColor: '#6366f1' },
+                headerTintColor: '#fff',
+              }} 
+            />
+            <Stack.Screen 
+              name="Chat" 
+              component={ChatScreen} 
+              options={{ 
+                headerShown: false,
+              }} 
+            />
+          </>
         )}
       </Stack.Navigator>
     </NavigationContainer>
