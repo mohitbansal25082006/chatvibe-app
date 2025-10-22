@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  Alert, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
   TextInput,
   ScrollView,
   ActivityIndicator,
@@ -29,7 +29,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
+// Removed Location import
 import { Audio } from 'expo-av';
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
@@ -82,7 +82,6 @@ const TypingIndicator: React.FC = () => {
         ])
       ).start();
     };
-
     animate(dot1, 0);
     animate(dot2, 200);
     animate(dot3, 400);
@@ -154,9 +153,9 @@ const MessageBubble: React.FC<{
 }> = ({ message, isUser, onReaction, onReply, onFeedback, messages }) => {
   const [showReactions, setShowReactions] = useState(false);
   const [showActions, setShowActions] = useState(false);
-  
+
   // Find the parent message if this is a reply
-  const parentMessage = message.parent_message_id 
+  const parentMessage = message.parent_message_id
     ? messages.find(m => m.id === message.parent_message_id)
     : null;
 
@@ -218,7 +217,6 @@ const MessageBubble: React.FC<{
           </View>
         </View>
       )}
-      
       <TouchableOpacity
         onLongPress={() => setShowActions(true)}
         activeOpacity={0.7}
@@ -236,13 +234,11 @@ const MessageBubble: React.FC<{
           >
             {message.content}
           </Text>
-          
           {message.attachments && message.attachments.length > 0 && (
             <View style={styles.attachmentsContainer}>
               {message.attachments.map((attachment, index) => renderAttachment(attachment, index))}
             </View>
           )}
-          
           <View style={styles.messageFooter}>
             <Text
               style={[
@@ -252,7 +248,6 @@ const MessageBubble: React.FC<{
             >
               {formatTime(message.created_at)}
             </Text>
-            
             {!isUser && (
               <View style={styles.feedbackContainer}>
                 <TouchableOpacity
@@ -262,10 +257,10 @@ const MessageBubble: React.FC<{
                   ]}
                   onPress={() => onFeedback(message.id, 1)}
                 >
-                  <Ionicons 
-                    name="thumbs-up" 
-                    size={16} 
-                    color={message.feedback_score === 1 ? "#fff" : "#9ca3af"} 
+                  <Ionicons
+                    name="thumbs-up"
+                    size={16}
+                    color={message.feedback_score === 1 ? "#fff" : "#9ca3af"}
                   />
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -275,16 +270,15 @@ const MessageBubble: React.FC<{
                   ]}
                   onPress={() => onFeedback(message.id, -1)}
                 >
-                  <Ionicons 
-                    name="thumbs-down" 
-                    size={16} 
-                    color={message.feedback_score === -1 ? "#fff" : "#9ca3af"} 
+                  <Ionicons
+                    name="thumbs-down"
+                    size={16}
+                    color={message.feedback_score === -1 ? "#fff" : "#9ca3af"}
                   />
                 </TouchableOpacity>
               </View>
             )}
           </View>
-          
           {message.reactions && message.reactions.length > 0 && (
             <View style={styles.reactionsContainer}>
               {message.reactions.map((reaction, index) => (
@@ -301,7 +295,6 @@ const MessageBubble: React.FC<{
           )}
         </View>
       </TouchableOpacity>
-      
       {showActions && (
         <View style={styles.messageActions}>
           <TouchableOpacity
@@ -314,7 +307,6 @@ const MessageBubble: React.FC<{
             <Ionicons name="arrow-undo" size={20} color="#6366f1" />
             <Text style={styles.actionText}>Reply</Text>
           </TouchableOpacity>
-          
           <TouchableOpacity
             style={styles.actionButton}
             onPress={() => {
@@ -325,7 +317,6 @@ const MessageBubble: React.FC<{
             <Ionicons name="happy-outline" size={20} color="#6366f1" />
             <Text style={styles.actionText}>React</Text>
           </TouchableOpacity>
-          
           <TouchableOpacity
             style={styles.actionButton}
             onPress={() => setShowActions(false)}
@@ -334,7 +325,6 @@ const MessageBubble: React.FC<{
           </TouchableOpacity>
         </View>
       )}
-      
       {showReactions && (
         <View style={styles.reactionsModal}>
           <View style={styles.reactionsModalContent}>
@@ -379,11 +369,11 @@ export const ChatScreen: React.FC = () => {
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const scrollViewRef = useRef<KeyboardAwareScrollView>(null);
   const insets = useSafeAreaInsets();
-  
-  const { 
-    fetchMessages, 
-    sendMessage, 
-    clearChat, 
+
+  const {
+    fetchMessages,
+    sendMessage,
+    clearChat,
     regenerateResponse,
     conversations,
     suggestions,
@@ -406,7 +396,7 @@ export const ChatScreen: React.FC = () => {
     searchMessages,
     generateConversationSummary
   } = useChat();
-  
+
   const route = useRoute<ChatScreenRouteProp>();
   const navigation = useNavigation<ChatScreenNavigationProp>();
   const { conversationId, botId } = route.params;
@@ -452,14 +442,12 @@ export const ChatScreen: React.FC = () => {
         ),
       });
     }
-    
     loadMessages();
   }, [conversationId, conversations, loadingSuggestions, loadingSummary]);
 
   const loadMessages = async () => {
     try {
       const chatMessages: DBMessage[] = await fetchMessages(conversationId);
-      
       if (Array.isArray(chatMessages)) {
         const transformedMessages = chatMessages.map((msg) => ({
           ...msg,
@@ -477,11 +465,9 @@ export const ChatScreen: React.FC = () => {
 
   const handleSend = async () => {
     if (!inputText.trim()) return;
-    
     const messageText = inputText.trim();
     setInputText('');
     setIsTyping(true);
-    
     try {
       await sendMessage(conversationId, messageText, undefined, replyingTo || undefined);
       setReplyingTo(null);
@@ -500,8 +486,8 @@ export const ChatScreen: React.FC = () => {
       'Are you sure you want to clear all messages in this chat?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Clear', 
+        {
+          text: 'Clear',
           onPress: async () => {
             await clearChat(conversationId);
             setMessages([]);
@@ -518,8 +504,8 @@ export const ChatScreen: React.FC = () => {
       'Are you sure you want to regenerate the last bot response?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Regenerate', 
+        {
+          text: 'Regenerate',
           onPress: async () => {
             setIsTyping(true);
             try {
@@ -555,12 +541,11 @@ export const ChatScreen: React.FC = () => {
     try {
       await submitFeedback(messageId, score);
       await loadMessages();
-      
       // Show feedback to user
       Alert.alert(
         'Feedback Submitted',
-        score > 0 
-          ? 'Thank you for your positive feedback! I\'ll use this to improve future responses.' 
+        score > 0
+          ? 'Thank you for your positive feedback! I\'ll use this to improve future responses.'
           : 'Thank you for your feedback! I\'ll work on providing better responses in the future.',
         [{ text: 'OK', style: 'default' }]
       );
@@ -583,8 +568,6 @@ export const ChatScreen: React.FC = () => {
     try {
       await stopRecording();
       setIsRecording(false);
-      // In a real implementation, you would process the recording here
-      // and send it as a voice message
     } catch (error) {
       console.error('Error stopping recording:', error);
       Alert.alert('Error', 'Failed to stop recording');
@@ -612,10 +595,7 @@ export const ChatScreen: React.FC = () => {
         aspect: [4, 3],
         quality: 1,
       });
-
       if (!result.canceled) {
-        // In a real implementation, you would upload the image
-        // and send it as a message attachment
         console.log('Selected image:', result.assets[0].uri);
       }
     } catch (error) {
@@ -627,10 +607,7 @@ export const ChatScreen: React.FC = () => {
   const handlePickDocument = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({});
-      
       if (result.assets && result.assets.length > 0) {
-        // In a real implementation, you would upload the document
-        // and send it as a message attachment
         console.log('Selected document:', result.assets[0]);
       }
     } catch (error) {
@@ -639,31 +616,13 @@ export const ChatScreen: React.FC = () => {
     }
   };
 
-  const handleShareLocation = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert('Permission denied', 'Permission to access location was denied');
-        return;
-      }
-
-      const location = await Location.getCurrentPositionAsync({});
-      
-      // In a real implementation, you would send the location as a message attachment
-      console.log('Current location:', location);
-    } catch (error) {
-      console.error('Error getting location:', error);
-      Alert.alert('Error', 'Failed to get location');
-    }
-  };
+  // Removed handleShareLocation
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
       setSearchResults([]);
       return;
     }
-
     try {
       const results: DBMessage[] = await searchMessages(conversationId, searchQuery);
       const transformedResults = results.map((msg) => ({
@@ -703,11 +662,10 @@ export const ChatScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      <StatusBar 
-        barStyle="light-content" 
+      <StatusBar
+        barStyle="light-content"
         backgroundColor={bot?.color || '#6366f1'}
       />
-      
       {bot && (
         <LinearGradient
           colors={[bot.color, `${bot.color}dd`]}
@@ -742,7 +700,6 @@ export const ChatScreen: React.FC = () => {
           </View>
         </LinearGradient>
       )}
-      
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingView}
         behavior={isIOS ? 'padding' : undefined}
@@ -780,14 +737,12 @@ export const ChatScreen: React.FC = () => {
               />
             ))
           )}
-          
           {isTyping && (
             <View style={[styles.messageBubble, styles.botBubble]}>
               <TypingIndicator />
             </View>
           )}
         </KeyboardAwareScrollView>
-
         {replyingToMessage && (
           <View style={styles.replyingContainer}>
             <View style={styles.replyingBar} />
@@ -805,7 +760,6 @@ export const ChatScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
         )}
-
         {showSuggestions && suggestions.length > 0 && (
           <View style={styles.suggestionsContainer}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -827,7 +781,6 @@ export const ChatScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
         )}
-
         <View style={[styles.inputContainer, { paddingBottom: isIOS ? insets.bottom : 16 }]}>
           <View style={styles.inputActions}>
             <TouchableOpacity
@@ -836,21 +789,13 @@ export const ChatScreen: React.FC = () => {
             >
               <Ionicons name="image-outline" size={20} color="#6366f1" />
             </TouchableOpacity>
-            
             <TouchableOpacity
               style={styles.inputActionButton}
               onPress={handlePickDocument}
             >
               <Ionicons name="document-outline" size={20} color="#6366f1" />
             </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.inputActionButton}
-              onPress={handleShareLocation}
-            >
-              <Ionicons name="location-outline" size={20} color="#6366f1" />
-            </TouchableOpacity>
-            
+            {/* Location button removed */}
             {isRecording ? (
               <TouchableOpacity
                 style={[styles.inputActionButton, styles.recordingButton]}
@@ -867,7 +812,6 @@ export const ChatScreen: React.FC = () => {
               </TouchableOpacity>
             )}
           </View>
-          
           <TextInput
             style={styles.input}
             value={inputText}
@@ -878,7 +822,6 @@ export const ChatScreen: React.FC = () => {
             maxLength={1000}
             textAlignVertical="center"
           />
-          
           <TouchableOpacity
             style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
             onPress={handleSend}
@@ -908,7 +851,6 @@ export const ChatScreen: React.FC = () => {
             >
               <Ionicons name="arrow-back" size={24} color="#1f2937" />
             </TouchableOpacity>
-            
             <TextInput
               style={styles.searchInput}
               value={searchQuery}
@@ -918,7 +860,6 @@ export const ChatScreen: React.FC = () => {
               autoFocus
               onSubmitEditing={handleSearch}
             />
-            
             <TouchableOpacity
               style={styles.searchButton}
               onPress={handleSearch}
@@ -926,7 +867,6 @@ export const ChatScreen: React.FC = () => {
               <Ionicons name="search" size={20} color="#6366f1" />
             </TouchableOpacity>
           </View>
-          
           <ScrollView style={styles.searchResults}>
             {searchResults.map((message) => (
               <View key={message.id} style={styles.searchResultItem}>
@@ -959,10 +899,8 @@ export const ChatScreen: React.FC = () => {
             >
               <Ionicons name="arrow-back" size={24} color="#1f2937" />
             </TouchableOpacity>
-            
             <Text style={styles.summaryTitle}>Conversation Summary</Text>
           </View>
-          
           <View style={styles.summaryContent}>
             {loadingSummary ? (
               <View style={styles.summaryLoading}>
